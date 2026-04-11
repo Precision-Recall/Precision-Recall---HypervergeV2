@@ -1,0 +1,8 @@
+openai
+python-dotenv
+qdrant-client
+requests
+tiktoken
+langchain>=0.3
+langchain-openai
+langgraph

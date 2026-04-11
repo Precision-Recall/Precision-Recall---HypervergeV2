@@ -1,0 +1,6 @@
+aws-bedrock/node_modules
+aws-bedrock/function.zip
+data
+3M_2018_extracted/3M_2018_10K/auto/images
+backend/aws-bedrock/node_modules
+backend/data_ingestion_pipeline/__pycache__

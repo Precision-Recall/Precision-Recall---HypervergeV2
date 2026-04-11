@@ -1,0 +1,5 @@
+requests
+tiktoken
+qdrant-client
+boto3
+mineru

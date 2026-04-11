@@ -1,0 +1,215 @@
+"""
+Gateway Agent — the entry point that routes queries to the appropriate subagent.
+Uses OpenAI GPT-nano as the main orchestrator LLM.
+Sub-agents stream their internal tool calls to the shared event queue.
+"""
+
+import sys
+import os
+import json
+import time
+import queue as _queue
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from langchain_openai import ChatOpenAI
+from langgraph.prebuilt import create_react_agent
+from langgraph.checkpoint.memory import MemorySaver
+
+from config import OPENAI_API_KEY, OPENAI_MODEL
+from agents.temporal_reasoner import temporal_reasoner_subagent
+from agents.cross_entity_agent import cross_entity_subagent
+from tools.call_limiter import reset_call_counts
+from tools.shared.list_available_data import list_available_data
+
+# Global event queue — set by ws_server before each request
+_event_queue: _queue.Queue | None = None
+
+
+def set_event_queue(eq: _queue.Queue | None):
+    global _event_queue
+    _event_queue = eq
+
+
+def _emit(event_type, **kwargs):
+    if _event_queue:
+        _event_queue.put({"type": event_type, "timestamp": time.time() * 1000, **kwargs})
+
+
+def _truncate(text, n=300):
+    return str(text)[:n] + ("..." if len(str(text)) > n else "")
+
+
+GATEWAY_SYSTEM_PROMPT = """You are the Gateway Agent — a financial analysis orchestrator.
+
+You receive user queries about company financial filings and delegate them to the 
+appropriate specialized subagent.
+
+## Your Subagents
+
+### 1. Temporal Reasoner
+- For questions about ONE company across MANY years.
+- Key signal: single company name + multiple years or year range.
+
+### 2. Cross-Entity Agent  
+- For questions comparing MANY companies (fixed or varying years).
+- Key signal: multiple company names or comparison language.
+
+### 3. List Available Data (Direct Tool)
+- Use when you need to know what companies/years exist in the database.
+
+## Routing Rules
+1. Greetings → respond directly with a friendly greeting and explain capabilities.
+2. Vague queries → ask user to specify company, year, metric.
+3. ONE company + time evolution → Temporal Reasoner.
+4. MULTIPLE companies → Cross-Entity Agent.
+5. Mixed → Cross-Entity Agent.
+6. General knowledge → answer directly, note you specialize in SEC filings.
+
+## Response Format
+- Synthesize into a clear, executive-level answer using ONLY retrieved data.
+- Include specific numbers, years, and data points from the retrieved chunks.
+- CRITICAL: If a subagent or tool returned NO DATA or empty results, say "I don't have data for this in the database" and list what IS available. Do NOT generate answers from your own knowledge. Do NOT speculate.
+- NEVER offer multiple options (A, B, C). Just answer or say you can't.
+- Keep responses under 300 words unless data warrants more.
+- If a tool returned 0 results, do NOT call it again with the same parameters.
+"""
+
+
+def _stream_subagent(agent, query: str, agent_name: str) -> str:
+    """Stream a sub-agent, emitting tool_call/tool_complete events. Collects sources."""
+    final = ""
+    sources = []
+    for event in agent.stream({"messages": [("user", query)]}, stream_mode="updates"):
+        for node_name, node_data in event.items():
+            for msg in node_data.get("messages", []):
+                msg_type = msg.type if hasattr(msg, "type") else type(msg).__name__
+
+                if msg_type == "ai" and hasattr(msg, "tool_calls") and msg.tool_calls:
+                    for tc in msg.tool_calls:
+                        _emit("tool_call", tool=tc.get("name", ""), agent=agent_name,
+                              data={"input": tc.get("args", {})})
+
+                elif msg_type == "tool":
+                    content = msg.content if hasattr(msg, "content") else str(msg)
+                    try:
+                        output = json.loads(content) if isinstance(content, str) else content
+                    except (json.JSONDecodeError, TypeError):
+                        output = {"result": _truncate(content)}
+
+                    # Collect sources from tool outputs
+                    _collect_sources(output, sources)
+
+                    try:
+                        output_str = json.dumps(output, default=str)
+                        if len(output_str) > 2000:
+                            output = {"result": _truncate(output_str, 1500), "truncated": True}
+                    except Exception:
+                        output = {"result": _truncate(str(output), 1500)}
+                    _emit("tool_complete", tool=msg.name if hasattr(msg, "name") else "",
+                          agent=agent_name, data={"output": output})
+
+                elif msg_type == "ai" and hasattr(msg, "content") and msg.content:
+                    if not (hasattr(msg, "tool_calls") and msg.tool_calls):
+                        final = msg.content
+
+    # Emit sources event
+    if sources:
+        _emit("sources", data={"sources": sources})
+
+    return final
+
+
+def _collect_sources(output, sources: list):
+    """Extract source metadata from tool outputs."""
+    if isinstance(output, dict):
+        # From year_range_retriever: {year: [payloads]}
+        for key, val in output.items():
+            if isinstance(val, list):
+                for item in val:
+                    if isinstance(item, dict) and "company" in item:
+                        src = {
+                            "company": item.get("company"),
+                            "year": item.get("year"),
+                            "section": item.get("section"),
+                            "section_item": item.get("section_item"),
+                            "page": item.get("page"),
+                            "type": item.get("type"),
+                            "text": _truncate(item.get("text", ""), 150),
+                        }
+                        if src not in sources:
+                            sources.append(src)
+        # From metric_trend_extractor: {trend: {}, sources: []}
+        if "sources" in output and isinstance(output["sources"], list):
+            for s in output["sources"]:
+                if isinstance(s, dict):
+                    sources.append(s)
+    elif isinstance(output, list):
+        for item in output:
+            if isinstance(item, dict) and "company" in item:
+                src = {
+                    "company": item.get("company"),
+                    "year": item.get("year"),
+                    "section": item.get("section"),
+                    "page": item.get("page"),
+                    "text": _truncate(item.get("text", ""), 150),
+                }
+                if src not in sources:
+                    sources.append(src)
+
+
+def _build_temporal_tool():
+    llm = ChatOpenAI(model=OPENAI_MODEL, api_key=OPENAI_API_KEY, temperature=0.0)
+    temporal_agent = create_react_agent(
+        model=llm,
+        tools=temporal_reasoner_subagent["tools"],
+        prompt=temporal_reasoner_subagent["system_prompt"],
+    )
+
+    def temporal_reasoner_tool(query: str) -> str:
+        """Route to Temporal Reasoner for single-company, multi-year analysis.
+
+        Use this for questions about ONE company across MANY years.
+        Examples: 'How did 3M revenue change from 2015 to 2018?',
+        'What risk factors changed in 3M between 2016 and 2017?'
+        """
+        reset_call_counts()
+        return _stream_subagent(temporal_agent, query, "Temporal Reasoner")
+
+    return temporal_reasoner_tool
+
+
+def _build_cross_entity_tool():
+    llm = ChatOpenAI(model=OPENAI_MODEL, api_key=OPENAI_API_KEY, temperature=0.0)
+    cross_agent = create_react_agent(
+        model=llm,
+        tools=cross_entity_subagent["tools"],
+        prompt=cross_entity_subagent["system_prompt"],
+    )
+
+    def cross_entity_tool(query: str) -> str:
+        """Route to Cross-Entity Agent for multi-company comparison and benchmarking.
+
+        Use this for questions comparing MULTIPLE companies.
+        Examples: 'Compare 3M and Activision revenue in 2017',
+        'Benchmark growth across all companies from 2015-2018'
+        """
+        reset_call_counts()
+        return _stream_subagent(cross_agent, query, "Cross-Entity Agent")
+
+    return cross_entity_tool
+
+
+def create_gateway_agent():
+    llm = ChatOpenAI(model=OPENAI_MODEL, api_key=OPENAI_API_KEY, temperature=0.0)
+    temporal_tool = _build_temporal_tool()
+    cross_entity_tool = _build_cross_entity_tool()
+
+    memory = MemorySaver()
+
+    return create_react_agent(
+        model=llm,
+        tools=[temporal_tool, cross_entity_tool, list_available_data],
+        prompt=GATEWAY_SYSTEM_PROMPT,
+        checkpointer=memory,
+    )

@@ -1,0 +1,131 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --font-inter: 'Inter', sans-serif;
+    --font-jetbrains-mono: 'JetBrains Mono', monospace;
+    
+    /* Light theme colors */
+    --background: 0 0% 100%;
+    --foreground: 0 0% 3.9%;
+    --primary: 262 83% 58%;
+    --primary-light: 262 90% 70%;
+    --primary-dark: 262 83% 48%;
+    --border: 0 0% 89.8%;
+    --success: 142 71% 45%;
+    --warning: 38 92% 50%;
+    --error: 0 84% 60%;
+    --muted: 0 0% 60%;
+  }
+
+  .dark {
+    /* Dark theme colors - Violet/Purple theme */
+    --background: 0 0% 3.9%;
+    --foreground: 0 0% 98%;
+    --primary: 262 83% 73%;
+    --primary-light: 262 90% 80%;
+    --primary-dark: 262 83% 58%;
+    --border: 0 0% 12%;
+    --success: 142 71% 45%;
+    --warning: 38 92% 50%;
+    --error: 0 84% 60%;
+    --muted: 0 0% 25%;
+  }
+
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground;
+    font-feature-settings: 'rlig' 1, 'calt' 1;
+    transition: background-color 0.3s ease, color 0.3s ease;
+  }
+}
+
+@layer utilities {
+  /* Animated gradient backgrounds */
+  .animate-gradient {
+    animation: gradient 8s ease infinite;
+    background-size: 200% 200%;
+  }
+
+  @keyframes gradient {
+    0% { background-position: 0% 50%; }
+    50% { background-position: 100% 50%; }
+    100% { background-position: 0% 50%; }
+  }
+
+  /* Pulse animation for blobs */
+  .animate-blob {
+    animation: blob 7s infinite;
+  }
+
+  @keyframes blob {
+    0%, 100% { transform: translate(0px, 0px) scale(1); }
+    33% { transform: translate(30px, -50px) scale(1.1); }
+    66% { transform: translate(-20px, 20px) scale(0.9); }
+  }
+}
+
+@layer utilities {
+  /* Custom scrollbar */
+  .scrollbar-thin {
+    scrollbar-width: thin;
+  }
+
+  .scrollbar-thumb-border {
+    scrollbar-color: theme('colors.border') transparent;
+  }
+
+  .scrollbar-track-transparent {
+    scrollbar-color: theme('colors.border') transparent;
+  }
+
+  /* Webkit scrollbar */
+  .scrollbar-thin::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+
+  .scrollbar-thin::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  .scrollbar-thin::-webkit-scrollbar-thumb {
+    background: theme('colors.border');
+    border-radius: 4px;
+  }
+
+  .scrollbar-thin::-webkit-scrollbar-thumb:hover {
+    background: theme('colors.muted');
+  }
+
+  /* Animations */
+  @keyframes pulse-slow {
+    0%, 100% {
+      opacity: 1;
+    }
+    50% {
+      opacity: 0.5;
+    }
+  }
+
+  .animate-pulse-slow {
+    animation: pulse-slow 3s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+  }
+}
+
+/* Selection */
+::selection {
+  background-color: theme('colors.primary.DEFAULT');
+  color: theme('colors.background');
+}
+
+/* Focus visible */
+:focus-visible {
+  outline: 2px solid theme('colors.primary.DEFAULT');
+  outline-offset: 2px;
+}
