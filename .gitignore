@@ -1,3 +1,9 @@
 3M_2018_extracted/3M_2018_10K/auto/images
 pycache/
 __pycache__/
+
+# Environment variable files — never commit real secrets
+.env
+.env.local
+.env.*.local
+*.env
