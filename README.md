@@ -4,9 +4,7 @@ A multi-agent financial analysis system with forensic capabilities for analyzing
 
 ## Security & Configuration
 
-**⚠️ IMPORTANT:** This codebase has been audited and cleaned of all hardcoded credentials and URLs. All sensitive configuration must be provided via environment variables.
-
-See [SECURITY_AUDIT_REPORT.md](./SECURITY_AUDIT_REPORT.md) for complete details.
+**⚠️ IMPORTANT:** This is a fresh repository created after a security incident in the previous repo, where credentials were accidentally committed to git history. All hardcoded credentials and URLs have been removed, and all sensitive configuration now requires environment variables. 
 
 ## Quick Start
 
