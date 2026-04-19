@@ -1,9 +1,0 @@
- Exhaustive scroll for narrative diff — using scroll_chunks() 
-instead of semantic search for the diff tool is smart. You can't find
-"what's missing" with similarity search.
-
-4. Terminology normalizer before comparison — corpus-driven synonym 
-resolution is a great idea. Most RAG systems skip this and get wrong 
-comparisons.
-6. Sector peer finder using vector similarity — zero LLM calls, pure 
-vector approach. Efficient...
